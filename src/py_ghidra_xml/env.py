@@ -4,12 +4,15 @@ import pickle
 import tempfile
 import uuid
 
+import construct
 import untangle
 
 CACHE_DIR = os.path.join(tempfile.gettempdir(), __name__)
 
+
 def _canonical_path(path):
     return os.path.abspath(os.path.expanduser(os.path.expandvars(path)))
+
 
 def loadGhidraEnvironment(xml_filename, cache_dir=CACHE_DIR, force_refresh=False):
     os.makedirs(cache_dir, exist_ok=True)
@@ -23,7 +26,6 @@ def loadGhidraEnvironment(xml_filename, cache_dir=CACHE_DIR, force_refresh=False
         canoncial_xml_path = _canonical_path(xml_filename)
         last_modified = int(os.path.getmtime(canoncial_xml_path))
         if force_refresh is True or cache_lock.get(canoncial_xml_path, ("",0))[1] < last_modified:
-            print("rebuild")
             env = GhidraEnvironment(canoncial_xml_path)
             pickle_path = os.path.join(cache_dir, "{:}.env.bin".format(uuid.uuid4()))
             with open(pickle_path, "wb") as pickle_file:
@@ -39,10 +41,28 @@ def loadGhidraEnvironment(xml_filename, cache_dir=CACHE_DIR, force_refresh=False
     return env
 
 
+DTYPE_CONSTRUCT_MAPPINGS = {
+    "undefined": construct.Bytes(1),
+    "undefined2": construct.Bytes(2),
+    "undefined4": construct.Bytes(4),
+    "int": construct.Int32ub
+}
+
+
 class GhidraStruct(object):
     def __init__(self, xml_node):
         self.xml = xml_node
-        print(self.xml)
+        self.size = int(xml_node["SIZE"], 0)
+
+        format_members = []
+        for element in xml_node.children:
+            construct_dtype = DTYPE_CONSTRUCT_MAPPINGS.get(
+                element["DATATYPE"],
+                construct.Bytes(int(element["SIZE"], 0))
+            )
+            format_members.append(element["NAME"] / construct_dtype)
+        self.format = construct.Struct(*format_members)
+
 
 class GhidraEnvironment(object):
     def __init__(self, xml_filename):
@@ -62,18 +82,14 @@ class GhidraEnvironment(object):
             start_addr = int(mem_section['START_ADDR'],16)
             if len(mem_section.children) > 0:
                 mapping = (mem_section.children[0]['FILE_NAME'],
-                            int(mem_section.children[0]['FILE_OFFSET'],0))
+                           int(mem_section.children[0]['FILE_OFFSET'], 0))
             else:
                 mapping = None
             section = (
-                (start_addr, start_addr + int(mem_section['LENGTH'],0)),
+                (start_addr, start_addr + int(mem_section['LENGTH'], 0)),
                 mapping
             )
             self.memmap.append(section)
-
-        print(self.memmap)
-        print(self.dtypes.keys())
-        breakpoint()
 
     def getMemBytes(self, addr, n_bytes):
         for section in self.memmap:
@@ -91,3 +107,10 @@ class GhidraEnvironment(object):
         section_offset = addr - section[0][0]
         data_file.seek(section[1][1] + section_offset)
         return data_file.read(n_bytes)
+
+    def getMemParsedStruct(self, addr, dtype_name):
+        dtype = self.dtypes[dtype_name]
+        raw = self.getMemBytes(addr, dtype.size)
+        return dtype.format.parse(raw)
+
+
