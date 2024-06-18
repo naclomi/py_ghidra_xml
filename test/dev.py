@@ -12,6 +12,7 @@ if __name__ == "__main__":
     print(env.dtypes.keys())
     print(env.dtypes["RootAssetListHeader"].format.export_ksy())
     print(env.dtypes["CartAssetHeader"].format.export_ksy())
-    b = extractRootBlock(0xB00B0464, env)
-    print(len(b))
-    print(env.dtypes["RootAssetListHeader"].format.parse(b))
+
+    root_block = extractRootBlock(0xB00B0464, env)
+    root_files_header = env.dtypes["RootAssetListHeader"].format.parse(root_block)
+    print(root_files_header.magic.hex())
